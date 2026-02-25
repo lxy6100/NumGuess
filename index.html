@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>猜数字（仅 Bulls：数字+位置都对）</title>
+  <style>
+    :root { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC","Microsoft YaHei", Arial; }
+    body { margin: 0; background:#0b1020; color:#e8ecff; }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 18px; }
+    h1 { margin: 0 0 10px; font-size: 20px; font-weight: 800; }
+    .sub { margin: 0 0 14px; opacity: .78; font-size: 13px; line-height: 1.6; }
+    .card { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; padding: 14px; }
+    .row { display:flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .row > .field { flex: 1 1 160px; min-width: 160px; }
+    label { display:block; font-size: 12px; opacity: 0.9; margin: 0 0 6px; }
+    input, select, button {
+      width: 100%; box-sizing: border-box;
+      border-radius: 10px; border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(0,0,0,0.25); color:#e8ecff;
+      padding: 10px 10px; outline: none;
+    }
+    input::placeholder { color: rgba(232,236,255,0.45); }
+    button { cursor:pointer; background: rgba(120,170,255,0.22); border-color: rgba(120,170,255,0.4); font-weight: 800; }
+    button:hover { background: rgba(120,170,255,0.28); }
+    button:disabled { cursor:not-allowed; opacity: 0.55; }
+    .split { display:grid; grid-template-columns: 1.1fr .9fr; gap: 12px; margin-top: 12px; }
+    @media (max-width: 820px) { .split { grid-template-columns: 1fr; } }
+    .pill { display:inline-block; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12); font-size: 12px; }
+    .big { font-size: 34px; font-weight: 900; letter-spacing: 2px; }
+    .guessBox { display:flex; align-items:center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .meta { display:flex; gap: 10px; flex-wrap: wrap; align-items:center; }
+    .muted { opacity: 0.75; }
+    .status { font-size: 13px; line-height: 1.6; }
+    .ok { color:#98ffb1; }
+    .warn { color:#ffcf6a; }
+    .err { color:#ff8fa3; }
+    table { width:100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.10); text-align:left; vertical-align: top; }
+    th { opacity: 0.85; font-weight: 800; }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; padding: 2px 6px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.16); background: rgba(0,0,0,0.25); }
+    .tiny { font-size: 12px; opacity: .78; }
+    .footer { margin-top: 12px; font-size: 12px; opacity: 0.72; }
+    .inline { display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>猜数字（仅 Bulls：数字+位置都对才算对）</h1>
+    <p class="sub">
+      你心里先写一个秘密数：长度 <b>n（1–9）</b>，每位从 <b>1–9</b> 取值，<b>允许重复</b>。<br/>
+      我每轮给一个猜测（程序不会给出“全位相同”的猜测），你只输入：<b>有几位“数字+位置都正确”</b>（Bulls，0..n）。
+    </p>
+
+    <div class="card">
+      <div class="row">
+        <div class="field">
+          <label>位数 n（1-9）</label>
+          <input id="n" type="number" min="1" max="9" value="4" />
+        </div>
+        <div class="field">
+          <label>策略</label>
+          <select id="mode">
+            <option value="expect">expect（最小期望剩余，平均更少轮）</option>
+            <option value="minimax">minimax（最小最坏情况，更稳）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>随机种子（可空）</label>
+          <input id="seed" type="text" placeholder="例如 42（不填则随机）" />
+        </div>
+        <div class="field">
+          <label>抽样强度（影响速度/聪明程度）</label>
+          <select id="samplePreset">
+            <option value="auto">自动（推荐）</option>
+            <option value="light">轻量（更快）</option>
+            <option value="balanced">均衡</option>
+            <option value="heavy">重度（更聪明但更慢）</option>
+          </select>
+        </div>
+        <div class="field">
+          <button id="startBtn">开始 / 重开</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="split">
+      <div class="card">
+        <div class="guessBox">
+          <div>
+            <div class="pill" id="phasePill">未开始</div>
+            <div id="guessText" class="big" style="margin-top:8px;">—</div>
+          </div>
+          <div class="meta">
+            <span class="pill">轮数：<b id="rounds">0</b></span>
+            <span class="pill">候选数：<b id="candCount">0</b></span>
+            <span class="pill">阈值全量：<b id="fullThresh">samples</b></span>
+          </div>
+        </div>
+
+        <div style="margin-top:12px;" class="row">
+          <div class="field" style="flex: 1 1 220px; min-width: 220px;">
+            <label>你对了几个位（Bulls，0..n）</label>
+            <input id="bullsInput" type="number" min="0" value="0" />
+          </div>
+          <div class="field" style="flex: 1 1 220px; min-width: 220px;">
+            <label>&nbsp;</label>
+            <button id="submitBtn" disabled>提交反馈</button>
+          </div>
+          <div class="field" style="flex: 1 1 220px; min-width: 220px;">
+            <label>&nbsp;</label>
+            <button id="nextBtn" disabled>我再猜一次</button>
+          </div>
+        </div>
+
+        <div id="status" class="status" style="margin-top:10px;"></div>
+        <div id="smallCands" class="tiny" style="margin-top:8px;"></div>
+
+        <div class="footer">
+          小贴士：这里的“候选数”代表当前用于决策的样本数（不是穷举全集）。
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="inline" style="justify-content: space-between;">
+          <div class="pill">历史记录</div>
+          <button id="clearHistoryBtn" style="width:auto; padding:8px 10px;">清空记录</button>
+        </div>
+        <div style="margin-top:10px; max-height: 420px; overflow:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:64px;">轮</th>
+                <th>猜测</th>
+                <th style="width:90px;">Bulls</th>
+                <th style="width:120px;">样本数</th>
+              </tr>
+            </thead>
+            <tbody id="historyBody">
+              <tr><td class="muted" colspan="4">暂无</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+function xmur3(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return function() {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    h ^= h >>> 16;
+    return h >>> 0;
+  };
+}
+function mulberry32(a) {
+  return function() {
+    let t = a += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function makeRng(seedText) {
+  if (!seedText) return Math.random;
+  const seedFn = xmur3(seedText);
+  return mulberry32(seedFn());
+}
+function randInt(rng, lo, hi) {
+  return lo + Math.floor(rng() * (hi - lo + 1));
+}
+function bullsStr(g, s) {
+  let b = 0;
+  for (let i = 0; i < g.length; i++) if (g[i] === s[i]) b++;
+  return b;
+}
+function isAllSame(guess) {
+  for (let i = 1; i < guess.length; i++) if (guess[i] !== guess[0]) return false;
+  return true;
+}
+function shuffleDigits(rng) {
+  const arr = ["1","2","3","4","5","6","7","8","9"];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = randInt(rng, 0, i);
+    const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+  }
+  return arr;
+}
+function randomGuess(n, rng) {
+  let s = "";
+  for (let i = 0; i < n; i++) s += String(randInt(rng, 1, 9));
+  return s;
+}
+
+function getPresetConfig(preset, rounds) {
+  if (preset === "light") return { sampleCount: 200, guessPool: 200 };
+  if (preset === "balanced") return { sampleCount: 400, guessPool: 400 };
+  if (preset === "heavy") return { sampleCount: 800, guessPool: 800 };
+  const autoBase = Math.min(1200, 220 + rounds * 80);
+  return { sampleCount: autoBase, guessPool: autoBase };
+}
+
+function findOneSecret(history, n, rng, limits) {
+  const m = history.length;
+  const cur = new Array(n);
+  const fixed = new Array(m).fill(0);
+  const guesses = history.map(h => h.guess);
+  const bullsNeed = history.map(h => h.bulls);
+  const startedAt = performance.now();
+  let nodes = 0;
+
+  function dfs(pos) {
+    nodes++;
+    if (nodes > limits.maxNodes || (performance.now() - startedAt) > limits.maxMillis) return null;
+    if (pos === n) {
+      for (let i = 0; i < m; i++) if (fixed[i] !== bullsNeed[i]) return null;
+      return cur.join("");
+    }
+
+    const order = shuffleDigits(rng);
+    for (let di = 0; di < order.length; di++) {
+      const d = order[di];
+      let ok = true;
+      for (let i = 0; i < m; i++) {
+        const add = guesses[i][pos] === d ? 1 : 0;
+        const nextFixed = fixed[i] + add;
+        const rem = n - (pos + 1);
+        if (nextFixed > bullsNeed[i] || bullsNeed[i] > nextFixed + rem) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+
+      cur[pos] = d;
+      for (let i = 0; i < m; i++) if (guesses[i][pos] === d) fixed[i]++;
+      const found = dfs(pos + 1);
+      for (let i = 0; i < m; i++) if (guesses[i][pos] === d) fixed[i]--;
+      if (found) return found;
+    }
+    return null;
+  }
+
+  const sol = dfs(0);
+  return { secret: sol, nodes };
+}
+
+async function sampleSecrets(history, n, targetCount, rng, limits, onProgress) {
+  const set = new Set();
+  let tried = 0;
+  let nodeBudget = 0;
+  const startAll = performance.now();
+
+  while (set.size < targetCount) {
+    const elapsed = performance.now() - startAll;
+    if (elapsed > limits.totalMaxMillis || nodeBudget > limits.totalMaxNodes) break;
+
+    const one = findOneSecret(history, n, rng, {
+      maxMillis: limits.perTryMaxMillis,
+      maxNodes: limits.perTryMaxNodes
+    });
+    tried++;
+    nodeBudget += one.nodes;
+    if (one.secret != null) set.add(one.secret);
+
+    if (onProgress && (tried % 10 === 0 || set.size === targetCount)) {
+      onProgress(set.size, targetCount, tried, elapsed);
+    }
+    if (tried % limits.yieldEveryTries === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  if (onProgress) onProgress(set.size, targetCount, tried, performance.now() - startAll);
+  return Array.from(set);
+}
+
+function buildGuessPool(samples, n, targetSize, rng) {
+  const pool = new Set();
+  const addGuess = (g) => {
+    if (g.length === n && !isAllSame(g)) pool.add(g);
+  };
+
+  const sampleTake = Math.min(samples.length, Math.floor(targetSize * 0.45));
+  for (let i = 0; i < sampleTake; i++) {
+    const g = samples[randInt(rng, 0, samples.length - 1)];
+    addGuess(g);
+  }
+
+  while (pool.size < Math.floor(targetSize * 0.8)) addGuess(randomGuess(n, rng));
+
+  const structuredCount = Math.max(20, Math.floor(targetSize * 0.2));
+  for (let i = 0; i < structuredCount; i++) {
+    const anchor = String(randInt(rng, 1, 9));
+    const arr = new Array(n);
+    for (let p = 0; p < n; p++) {
+      arr[p] = (rng() < 0.45) ? anchor : String(randInt(rng, 1, 9));
+    }
+    addGuess(arr.join(""));
+  }
+
+  while (pool.size < targetSize) addGuess(randomGuess(n, rng));
+  return Array.from(pool);
+}
+
+function pickNextGuessFromSamples(samples, n, mode, guessPoolSize, rng) {
+  const pool = buildGuessPool(samples, n, guessPoolSize, rng);
+  const scores = [];
+
+  for (let i = 0; i < pool.length; i++) {
+    const g = pool[i];
+    const counts = new Array(n + 1).fill(0);
+    for (let j = 0; j < samples.length; j++) {
+      counts[bullsStr(g, samples[j])]++;
+    }
+    let score;
+    if (mode === "minimax") {
+      let mx = 0;
+      for (let k = 0; k <= n; k++) if (counts[k] > mx) mx = counts[k];
+      score = mx;
+    } else {
+      let sumSq = 0;
+      for (let k = 0; k <= n; k++) sumSq += counts[k] * counts[k];
+      score = sumSq;
+    }
+    scores.push({ g, score });
+  }
+
+  scores.sort((a, b) => a.score - b.score);
+  for (const it of scores) if (!isAllSame(it.g)) return { guess: it.g, bestScore: it.score, poolSize: pool.length };
+  return { guess: null, bestScore: Infinity, poolSize: pool.length };
+}
+
+let state = {
+  n: 4,
+  mode: "expect",
+  preset: "auto",
+  rng: Math.random,
+  rounds: 0,
+  currentGuess: null,
+  started: false,
+  history: [],
+  samples: []
+};
+
+const elN = document.getElementById("n");
+const elMode = document.getElementById("mode");
+const elSeed = document.getElementById("seed");
+const elPreset = document.getElementById("samplePreset");
+const elStartBtn = document.getElementById("startBtn");
+const elGuessText = document.getElementById("guessText");
+const elRounds = document.getElementById("rounds");
+const elCandCount = document.getElementById("candCount");
+const elBullsInput = document.getElementById("bullsInput");
+const elSubmitBtn = document.getElementById("submitBtn");
+const elNextBtn = document.getElementById("nextBtn");
+const elStatus = document.getElementById("status");
+const elSmallCands = document.getElementById("smallCands");
+const elHistoryBody = document.getElementById("historyBody");
+const elPhasePill = document.getElementById("phasePill");
+const elClearHistoryBtn = document.getElementById("clearHistoryBtn");
+const elFullThresh = document.getElementById("fullThresh");
+
+function setStatus(html, cls) {
+  elStatus.className = "status " + (cls || "");
+  elStatus.innerHTML = html;
+}
+function renderTop() {
+  elRounds.textContent = String(state.rounds);
+  elCandCount.textContent = String(state.samples.length);
+  elFullThresh.textContent = "samples";
+  elGuessText.textContent = state.currentGuess == null ? "—" : state.currentGuess;
+  elBullsInput.min = "0";
+  elBullsInput.max = String(state.n);
+  elPhasePill.textContent = state.started ? "进行中" : "未开始";
+}
+function renderSmallCandidates() {
+  if (!state.started || state.samples.length > 10) { elSmallCands.textContent = ""; return; }
+  elSmallCands.innerHTML = `样本候选（<=10）：<span class="kbd">${state.samples.join("，")}</span>`;
+}
+function renderHistory() {
+  if (!state.history.length) {
+    elHistoryBody.innerHTML = `<tr><td class="muted" colspan="4">暂无</td></tr>`;
+    return;
+  }
+  elHistoryBody.innerHTML = state.history.map(item => `
+    <tr>
+      <td>${item.round}</td>
+      <td class="kbd">${item.guess}</td>
+      <td>${item.bulls}</td>
+      <td>${item.remaining}</td>
+    </tr>`).join("");
+}
+function disableControls(disabled) {
+  elSubmitBtn.disabled = disabled;
+  elNextBtn.disabled = disabled;
+  elBullsInput.disabled = disabled;
+}
+
+function startGame() {
+  const n = Math.max(1, Math.min(9, parseInt(elN.value || "4", 10)));
+  elN.value = String(n);
+  state = {
+    n,
+    mode: elMode.value === "minimax" ? "minimax" : "expect",
+    preset: elPreset.value || "auto",
+    rng: makeRng((elSeed.value || "").trim()),
+    rounds: 0,
+    currentGuess: null,
+    started: true,
+    history: [],
+    samples: []
+  };
+  disableControls(false);
+  elSubmitBtn.disabled = true;
+  elNextBtn.disabled = false;
+  renderTop();
+  renderHistory();
+  renderSmallCandidates();
+  setStatus(`已开始。规则：秘密允许重复；程序猜测禁止全相同。点击 <b>“我再猜一次”</b>。`, "ok");
+}
+
+async function doNextGuess() {
+  if (!state.started) return;
+  const cfg = getPresetConfig(state.preset, state.rounds);
+  const limits = {
+    perTryMaxMillis: 22,
+    perTryMaxNodes: 5000,
+    totalMaxMillis: state.preset === "heavy" ? 3000 : 2000,
+    totalMaxNodes: state.preset === "heavy" ? 1200000 : 800000,
+    yieldEveryTries: 8
+  };
+
+  setStatus(`正在采样可行秘密… 0/${cfg.sampleCount}`, "warn");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const samples = await sampleSecrets(state.history, state.n, cfg.sampleCount, state.rng, limits,
+    (got, target, tried, elapsed) => {
+      setStatus(`正在采样可行秘密… 已获得 <b>${got}/${target}</b>（尝试 ${tried} 次，${Math.round(elapsed)}ms）`, "warn");
+      elCandCount.textContent = String(got);
+    }
+  );
+
+  state.samples = samples;
+  renderTop();
+  renderSmallCandidates();
+
+  if (samples.length === 0) {
+    setStatus(`⚠️ 当前历史约束下找不到任何可行秘密（样本=0），某轮 Bulls 可能输入错误或前后矛盾。请重开。`, "err");
+    elPhasePill.textContent = "矛盾";
+    disableControls(true);
+    return;
+  }
+
+  setStatus(`正在评分 GuessPool（策略：${state.mode}，样本：${samples.length}）…`, "warn");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const picked = pickNextGuessFromSamples(samples, state.n, state.mode, cfg.guessPool, state.rng);
+
+  if (!picked.guess) {
+    setStatus(`未能生成合法猜测（猜测禁止全相同）。请重试“我再猜一次”或重开。`, "err");
+    elNextBtn.disabled = false;
+    return;
+  }
+
+  state.currentGuess = picked.guess;
+  renderTop();
+
+  const extra = samples.length < cfg.sampleCount
+    ? `（样本不足，已用 ${samples.length} 个样本决策）`
+    : "";
+  setStatus(`请输入本轮 <b>Bulls</b>（0..${state.n}）。已从 ${picked.poolSize} 个猜测候选中选出最佳（score=${picked.bestScore}）${extra}。`, "");
+  elSubmitBtn.disabled = false;
+  elNextBtn.disabled = true;
+}
+
+async function submitFeedback() {
+  if (!state.started || state.currentGuess == null) return;
+  const bullsVal = parseInt(elBullsInput.value || "0", 10);
+  if (!Number.isFinite(bullsVal) || bullsVal < 0 || bullsVal > state.n) {
+    setStatus(`请输入 0..${state.n} 的整数。`, "err");
+    return;
+  }
+
+  state.rounds += 1;
+  state.history.unshift({ round: state.rounds, guess: state.currentGuess, bulls: bullsVal, remaining: state.samples.length });
+  renderHistory();
+
+  if (bullsVal === state.n) {
+    renderTop();
+    setStatus(`✅ 猜中了！答案就是 <span class="kbd">${state.currentGuess}</span>。总轮数：<b>${state.rounds}</b>。`, "ok");
+    elPhasePill.textContent = "已完成";
+    disableControls(true);
+    return;
+  }
+
+  setStatus(`正在校验反馈是否可行…`, "warn");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const sanity = await sampleSecrets(state.history, state.n, 30, state.rng, {
+    perTryMaxMillis: 18,
+    perTryMaxNodes: 3500,
+    totalMaxMillis: 900,
+    totalMaxNodes: 250000,
+    yieldEveryTries: 6
+  });
+  if (sanity.length === 0) {
+    renderTop();
+    setStatus(`⚠️ 反馈后出现矛盾：找不到满足全部历史的秘密。某轮 Bulls 可能输入错误，请重开。`, "err");
+    elPhasePill.textContent = "矛盾";
+    disableControls(true);
+    return;
+  }
+
+  state.samples = sanity;
+  renderTop();
+  renderSmallCandidates();
+  setStatus(`反馈已记录。点击 <b>“我再猜一次”</b> 继续（将基于历史重新采样）。`, "ok");
+  elSubmitBtn.disabled = true;
+  elNextBtn.disabled = false;
+}
+
+elStartBtn.addEventListener("click", startGame);
+elNextBtn.addEventListener("click", () => {
+  if (!state.started) return;
+  elNextBtn.disabled = true;
+  doNextGuess().catch(() => {
+    setStatus("计算失败，请重试或重开。", "err");
+    elNextBtn.disabled = false;
+  });
+});
+elSubmitBtn.addEventListener("click", () => {
+  submitFeedback().catch(() => setStatus("提交反馈时出现错误。", "err"));
+});
+elClearHistoryBtn.addEventListener("click", () => { state.history = []; renderHistory(); });
+elBullsInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !elSubmitBtn.disabled) submitFeedback();
+});
+
+disableControls(true);
+renderTop();
+setStatus(`点击 <b>“开始 / 重开”</b> 初始化。`, "");
+</script>
+</body>
+</html>
