@@ -84,8 +84,8 @@
       <button id="themeBtn" style="width:auto; padding:8px 12px;">切换浅色模式</button>
     </div>
     <p class="sub">
-      你心里先写一个秘密数：长度 <b>n（1–9）</b>，每位从 <b>1–9</b> 取值，<b>允许重复</b>。<br/>
-      我每轮给一个猜测（程序不会给出“全位相同”的猜测），你只输入：<b>有几位“数字+位置都正确”</b>（Bulls，0..n）。
+      你心里先写一个秘密数：长度 <b>n（1–9）</b>，每位从 <b>1–9</b> 取值；可在下方选择“数字可重复/不可重复”模式。<br/>
+      我每轮给一个猜测（n&gt;1 时不会给出“全位相同”的猜测），你只输入：<b>有几位“数字+位置都正确”</b>（Bulls，0..n）。
     </p>
 
     <div class="card">
@@ -93,6 +93,13 @@
         <div class="field">
           <label>位数 n（1-9）</label>
           <input id="n" type="number" min="1" max="9" value="4" />
+        </div>
+        <div class="field">
+          <label>数字模式</label>
+          <select id="digitMode">
+            <option value="repeat">数字可重复（如 1123 / 1111）</option>
+            <option value="unique">数字不可重复（如 1234）</option>
+          </select>
         </div>
         <div class="field">
           <label>策略</label>
@@ -217,8 +224,31 @@ function bullsStr(g, s) {
   return b;
 }
 function isAllSame(guess) {
+  if (guess.length <= 1) return false;
   for (let i = 1; i < guess.length; i++) if (guess[i] !== guess[0]) return false;
   return true;
+}
+function hasRepeatedDigit(guess) {
+  return new Set(guess).size !== guess.length;
+}
+function isAllowedByDigitMode(value, digitMode) {
+  return digitMode !== "unique" || !hasRepeatedDigit(value);
+}
+function digitModeLabel(digitMode) {
+  return digitMode === "unique" ? "数字不可重复" : "数字可重复";
+}
+
+function permCount9Pn(n) {
+  let v = 1;
+  for (let i = 0; i < n; i++) v *= (9 - i);
+  return v;
+}
+function possibleSecretCount(n, digitMode) {
+  return digitMode === "unique" ? permCount9Pn(n) : Math.pow(9, n);
+}
+function possibleGuessCount(n, digitMode) {
+  const total = possibleSecretCount(n, digitMode);
+  return digitMode === "repeat" && n > 1 ? total - 9 : total;
 }
 function shuffleDigits(rng) {
   const arr = ["1","2","3","4","5","6","7","8","9"];
@@ -228,7 +258,8 @@ function shuffleDigits(rng) {
   }
   return arr;
 }
-function randomGuess(n, rng) {
+function randomGuess(n, rng, digitMode) {
+  if (digitMode === "unique") return shuffleDigits(rng).slice(0, n).join("");
   let s = "";
   for (let i = 0; i < n; i++) s += String(randInt(rng, 1, 9));
   return s;
@@ -242,13 +273,14 @@ function getPresetConfig(preset, rounds) {
   return { sampleCount: autoBase, guessPool: autoBase };
 }
 
-function findOneSecret(history, n, rng, limits) {
+function findOneSecret(history, n, rng, limits, digitMode) {
   const m = history.length;
   const cur = new Array(n);
   const fixed = new Array(m).fill(0);
   const guesses = history.map(h => h.guess);
   const bullsNeed = history.map(h => h.bulls);
   const startedAt = performance.now();
+  const used = new Set();
   let nodes = 0;
 
   function dfs(pos) {
@@ -262,6 +294,7 @@ function findOneSecret(history, n, rng, limits) {
     const order = shuffleDigits(rng);
     for (let di = 0; di < order.length; di++) {
       const d = order[di];
+      if (digitMode === "unique" && used.has(d)) continue;
       let ok = true;
       for (let i = 0; i < m; i++) {
         const add = guesses[i][pos] === d ? 1 : 0;
@@ -275,9 +308,11 @@ function findOneSecret(history, n, rng, limits) {
       if (!ok) continue;
 
       cur[pos] = d;
+      if (digitMode === "unique") used.add(d);
       for (let i = 0; i < m; i++) if (guesses[i][pos] === d) fixed[i]++;
       const found = dfs(pos + 1);
       for (let i = 0; i < m; i++) if (guesses[i][pos] === d) fixed[i]--;
+      if (digitMode === "unique") used.delete(d);
       if (found) return found;
     }
     return null;
@@ -287,7 +322,7 @@ function findOneSecret(history, n, rng, limits) {
   return { secret: sol, nodes };
 }
 
-async function sampleSecrets(history, n, targetCount, rng, limits, onProgress) {
+async function sampleSecrets(history, n, targetCount, rng, limits, onProgress, digitMode = "repeat") {
   const set = new Set();
   let tried = 0;
   let nodeBudget = 0;
@@ -300,7 +335,7 @@ async function sampleSecrets(history, n, targetCount, rng, limits, onProgress) {
     const one = findOneSecret(history, n, rng, {
       maxMillis: limits.perTryMaxMillis,
       maxNodes: limits.perTryMaxNodes
-    });
+    }, digitMode);
     tried++;
     nodeBudget += one.nodes;
     if (one.secret != null) set.add(one.secret);
@@ -317,10 +352,11 @@ async function sampleSecrets(history, n, targetCount, rng, limits, onProgress) {
   return Array.from(set);
 }
 
-function buildGuessPool(samples, n, targetSize, rng) {
+function buildGuessPool(samples, n, targetSize, rng, digitMode) {
+  targetSize = Math.min(targetSize, possibleGuessCount(n, digitMode));
   const pool = new Set();
   const addGuess = (g) => {
-    if (g.length === n && !isAllSame(g)) pool.add(g);
+    if (g.length === n && !isAllSame(g) && isAllowedByDigitMode(g, digitMode)) pool.add(g);
   };
 
   const sampleTake = Math.min(samples.length, Math.floor(targetSize * 0.45));
@@ -329,10 +365,14 @@ function buildGuessPool(samples, n, targetSize, rng) {
     addGuess(g);
   }
 
-  while (pool.size < Math.floor(targetSize * 0.8)) addGuess(randomGuess(n, rng));
+  while (pool.size < Math.floor(targetSize * 0.8)) addGuess(randomGuess(n, rng, digitMode));
 
   const structuredCount = Math.max(20, Math.floor(targetSize * 0.2));
   for (let i = 0; i < structuredCount; i++) {
+    if (digitMode === "unique") {
+      addGuess(shuffleDigits(rng).slice(0, n).join(""));
+      continue;
+    }
     const anchor = String(randInt(rng, 1, 9));
     const arr = new Array(n);
     for (let p = 0; p < n; p++) {
@@ -341,12 +381,12 @@ function buildGuessPool(samples, n, targetSize, rng) {
     addGuess(arr.join(""));
   }
 
-  while (pool.size < targetSize) addGuess(randomGuess(n, rng));
+  while (pool.size < targetSize) addGuess(randomGuess(n, rng, digitMode));
   return Array.from(pool);
 }
 
-function pickNextGuessFromSamples(samples, n, mode, guessPoolSize, rng) {
-  const pool = buildGuessPool(samples, n, guessPoolSize, rng);
+function pickNextGuessFromSamples(samples, n, mode, guessPoolSize, rng, digitMode) {
+  const pool = buildGuessPool(samples, n, guessPoolSize, rng, digitMode);
   const scores = [];
 
   for (let i = 0; i < pool.length; i++) {
@@ -369,13 +409,14 @@ function pickNextGuessFromSamples(samples, n, mode, guessPoolSize, rng) {
   }
 
   scores.sort((a, b) => a.score - b.score);
-  for (const it of scores) if (!isAllSame(it.g)) return { guess: it.g, bestScore: it.score, poolSize: pool.length };
+  for (const it of scores) if (!isAllSame(it.g) && isAllowedByDigitMode(it.g, digitMode)) return { guess: it.g, bestScore: it.score, poolSize: pool.length };
   return { guess: null, bestScore: Infinity, poolSize: pool.length };
 }
 
 let state = {
   n: 4,
   mode: "expect",
+  digitMode: "repeat",
   preset: "auto",
   rng: Math.random,
   rounds: 0,
@@ -387,6 +428,7 @@ let state = {
 
 const elN = document.getElementById("n");
 const elMode = document.getElementById("mode");
+const elDigitMode = document.getElementById("digitMode");
 const elSeed = document.getElementById("seed");
 const elPreset = document.getElementById("samplePreset");
 const elStartBtn = document.getElementById("startBtn");
@@ -463,6 +505,7 @@ function startGame() {
   state = {
     n,
     mode: elMode.value === "minimax" ? "minimax" : "expect",
+    digitMode: elDigitMode.value === "unique" ? "unique" : "repeat",
     preset: elPreset.value || "auto",
     rng: makeRng((elSeed.value || "").trim()),
     rounds: 0,
@@ -477,12 +520,14 @@ function startGame() {
   renderTop();
   renderHistory();
   renderSmallCandidates();
-  setStatus(`已开始。规则：秘密允许重复；程序猜测禁止全相同。点击 <b>“我再猜一次”</b>。`, "ok");
+  setStatus(`已开始。模式：<b>${digitModeLabel(state.digitMode)}</b>；n&gt;1 时程序猜测禁止全相同。点击 <b>“我再猜一次”</b>。`, "ok");
 }
 
 async function doNextGuess() {
   if (!state.started) return;
   const cfg = getPresetConfig(state.preset, state.rounds);
+  const sampleTarget = Math.min(cfg.sampleCount, possibleSecretCount(state.n, state.digitMode));
+  const guessPoolTarget = Math.min(cfg.guessPool, possibleGuessCount(state.n, state.digitMode));
   const limits = {
     perTryMaxMillis: 22,
     perTryMaxNodes: 5000,
@@ -491,13 +536,14 @@ async function doNextGuess() {
     yieldEveryTries: 8
   };
 
-  setStatus(`正在采样可行秘密… 0/${cfg.sampleCount}`, "warn");
+  setStatus(`正在采样可行秘密（${digitModeLabel(state.digitMode)}）… 0/${sampleTarget}`, "warn");
   await new Promise((resolve) => setTimeout(resolve, 10));
-  const samples = await sampleSecrets(state.history, state.n, cfg.sampleCount, state.rng, limits,
+  const samples = await sampleSecrets(state.history, state.n, sampleTarget, state.rng, limits,
     (got, target, tried, elapsed) => {
-      setStatus(`正在采样可行秘密… 已获得 <b>${got}/${target}</b>（尝试 ${tried} 次，${Math.round(elapsed)}ms）`, "warn");
+      setStatus(`正在采样可行秘密（${digitModeLabel(state.digitMode)}）… 已获得 <b>${got}/${target}</b>（尝试 ${tried} 次，${Math.round(elapsed)}ms）`, "warn");
       elCandCount.textContent = String(got);
-    }
+    },
+    state.digitMode
   );
 
   state.samples = samples;
@@ -513,7 +559,7 @@ async function doNextGuess() {
 
   setStatus(`正在评分 GuessPool（策略：${state.mode}，样本：${samples.length}）…`, "warn");
   await new Promise((resolve) => setTimeout(resolve, 10));
-  const picked = pickNextGuessFromSamples(samples, state.n, state.mode, cfg.guessPool, state.rng);
+  const picked = pickNextGuessFromSamples(samples, state.n, state.mode, guessPoolTarget, state.rng, state.digitMode);
 
   if (!picked.guess) {
     setStatus(`未能生成合法猜测（猜测禁止全相同）。请重试“我再猜一次”或重开。`, "err");
@@ -524,7 +570,7 @@ async function doNextGuess() {
   state.currentGuess = picked.guess;
   renderTop();
 
-  const extra = samples.length < cfg.sampleCount
+  const extra = samples.length < sampleTarget
     ? `（样本不足，已用 ${samples.length} 个样本决策）`
     : "";
   setStatus(`请输入本轮 <b>Bulls</b>（0..${state.n}）。已从 ${picked.poolSize} 个猜测候选中选出最佳（score=${picked.bestScore}）${extra}。`, "");
@@ -560,7 +606,7 @@ async function submitFeedback() {
     totalMaxMillis: 900,
     totalMaxNodes: 250000,
     yieldEveryTries: 6
-  });
+  }, null, state.digitMode);
   if (sanity.length === 0) {
     renderTop();
     setStatus(`⚠️ 反馈后出现矛盾：找不到满足全部历史的秘密。某轮 Bulls 可能输入错误，请重开。`, "err");
